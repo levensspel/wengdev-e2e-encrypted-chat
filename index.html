@@ -31,14 +31,14 @@
     
         <!-- Hacking Demo Panel -->
         <div id="hackingDemo" class="p-4 border border-yellow-300 rounded-lg bg-yellow-50">
-            <h3 class="text-lg font-bold text-yellow-600 mb-2">Hacking Demo Panel</h3>
+            <h3 class="text-lg font-bold text-yellow-600 mb-2">Hacking Demo</h3>
             <p class="text-sm text-gray-700 mb-4">
-                Use this panel to simulate decrypting a captured message using a compromised key.
+                Simulate decrypting a captured message using the leaked key and ensure can only be decrypted by specific rotational key.
             </p>
     
             <div class="mb-4">
                 <label for="hackedMessage" class="block text-sm font-medium text-gray-700 mb-2">
-                    Captured Encrypted Message (JSON format with encrypted and iv):
+                    Captured Encrypted Message (JSON stringified of encrypted data & the iv):
                 </label>
                 <textarea
                     id="hackedMessage"
@@ -49,11 +49,11 @@
     
             <div class="mb-4">
                 <label for="hackedKey" class="block text-sm font-medium text-gray-700 mb-2">
-                    Captured Key (stringified CryptoKey):
+                    Leaked Shared Key (JSON stringified CryptoKey in JWK format):
                 </label>
                 <textarea
                     id="hackedKey"
-                    placeholder="Paste the logged key here"
+                    placeholder='{"alg":"A256GCM","ext":true,"k":"...","key_ops":["encrypt","decrypt"],"kty":"oct"}'
                     class="w-full h-24 px-4 py-2 border border-gray-300 rounded-lg focus:ring focus:ring-yellow-300"
                 ></textarea>
             </div>
@@ -100,7 +100,7 @@
                     name: "AES-GCM",
                     length: 256
                 },
-                true, // Changed to true to allow export
+                true,
                 ["encrypt", "decrypt"]
             );
             return sharedSecret;
@@ -163,9 +163,8 @@
 
             ws.onmessage = async (event) => {
                 const data = JSON.parse(event.data);
-                
-                if (data.type === 'connect') {
-                    console.log('New Peer Connected!');
+
+                if (data.type === 'connect' || data.type === 'rotateKey') {
                     peerPublicKey = await cryptoSubtle.importKey(
                         "jwk",
                         data.key,
@@ -179,42 +178,27 @@
                     
                     sharedKey = await deriveSharedKey(
                         currentKeyPair.privateKey,
-                        peerPublicKey
+                        peerPublicKey,
                     );
 
-                    // Log the shared key for hacking demo
-                    const exportedKey = await cryptoSubtle.exportKey("jwk", sharedKey);
-                    await rotateKeys();
-                    
-                } else if (data.type === 'key') {
-                    peerPublicKey = await cryptoSubtle.importKey(
-                        "jwk",
-                        data.key,
-                        {
-                            name: "ECDH",
-                            namedCurve: "P-256"
-                        },
-                        true,
-                        []
-                    );
-                    
-                    sharedKey = await deriveSharedKey(
-                        currentKeyPair.privateKey,
-                        peerPublicKey
-                    );
+                    if (data.type === 'connect') {
+                        console.log('New Peer Connected!');
+                        await rotateKeys();
+                    }
 
-                    // Log the shared key for hacking demo
                     const exportedKey = await cryptoSubtle.exportKey("jwk", sharedKey);
-                    console.log('Current Shared Key (copy this for hacking demo):', JSON.stringify(exportedKey));
                     
+                    // Log the shared key for hacking demo
+                    console.log(`%cCurrent Shared Key (copy this for hacking demo):\n ${JSON.stringify(exportedKey)}`, 'color: blue');
                 } else if (data.type === 'message') {
+                    const encryptedData = JSON.stringify({
+                        encrypted: data.encrypted,
+                        iv: data.iv
+                    })
+
                     // Log the encrypted message for hacking demo
-                    console.log('Encrypted Message (copy this for hacking demo):', 
-                        JSON.stringify({
-                            encrypted: data.encrypted,
-                            iv: data.iv
-                        })
-                    );
+                    console.log(`%cSent Encrypted Message (copy this for hacking demo):\n\n ${encryptedData}`,
+                    'color: green');
 
                     const decrypted = await decrypt(
                         data.encrypted,
@@ -241,7 +225,7 @@
                 currentKeyPair.publicKey
             );
             ws.send(JSON.stringify({
-                type: 'key',
+                type: 'rotateKey',
                 key: exportedPublicKey
             }));
             
@@ -259,9 +243,7 @@
             const encrypted = await encrypt(message, sharedKey);
             
             // Log the encrypted message for hacking demo
-            console.log('Sent Encrypted Message (copy this for hacking demo):', 
-                JSON.stringify(encrypted)
-            );
+            console.log(`%cSent Encrypted Message (copy this for hacking demo):\n\n ${JSON.stringify(encrypted)}`, 'color: green');
 
             ws.send(JSON.stringify({
                 type: 'message',
@@ -290,6 +272,12 @@
         // Hacking demo function
         async function attemptHack() {
             try {
+                const hackResult = document.getElementById('hackResult');
+                hackResult.classList.add('text-black');
+                hackResult.classList.remove('text-green-500');
+                hackResult.classList.remove('text-red-500');
+                hackResult.textContent = '';
+
                 const hackedMessageStr = document.getElementById('hackedMessage').value;
                 const hackedKeyStr = document.getElementById('hackedKey').value;
                 
@@ -316,10 +304,14 @@
                     importedKey
                 );
 
-                document.getElementById('hackResult').textContent = 
+                hackResult.classList.remove('text-red-500');
+                hackResult.classList.add('text-green-500');
+                hackResult.textContent = 
                     `Decrypted message: ${decryptedMessage}`;
             } catch (error) {
-                document.getElementById('hackResult').textContent = 
+                hackResult.classList.remove('text-green-500');
+                hackResult.classList.add('text-red-500');
+                hackResult.textContent = 
                     `Decryption failed: ${error.message}`;
             }
         }
